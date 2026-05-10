@@ -1,0 +1,23 @@
+[package]
+name = "queued-build-hook"
+version = "0.1.0"
+edition = "2021"
+description = "Async post-build-hook queue daemon for pushing Nix store paths to a binary cache"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-journald = "0.3"
+zbus = { version = "4", features = ["blocking"] }
+
+[dependencies.libc]
+version = "0.2"
+default-features = false
+
+[profile.release]
+lto = true
+strip = true
