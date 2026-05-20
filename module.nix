@@ -215,6 +215,35 @@ in {
       description = ''
         systemd IOSchedulingClass. `idle` (default) means the disk yields
         to anything else competing for I/O.
+
+        Note: the kernel's `none` scheduler (default for NVMe) ignores
+        this — it dispatches FIFO regardless of ionice class. See
+        `ioWeight` for a cgroup v2 control that works scheduler-agnostically.
+      '';
+    };
+
+    cpuWeight = lib.mkOption {
+      type = lib.types.ints.between 1 10000;
+      default = 10;
+      description = ''
+        systemd CPUWeight (cgroup v2). Default 100; this module defaults
+        to 10 so the service gets ~1/10 the CPU share of normal-weight
+        cgroups when anything else competes. Complementary to
+        `cpuSchedulingPolicy = "idle"` — the policy is honored by the
+        kernel scheduler within a cgroup, the weight is honored by the
+        cgroup v2 cpu controller across cgroups.
+      '';
+    };
+
+    ioWeight = lib.mkOption {
+      type = lib.types.ints.between 1 10000;
+      default = 10;
+      description = ''
+        systemd IOWeight (cgroup v2). Default 100; this module defaults
+        to 10 so the service gets ~1/10 the I/O share when anything else
+        competes. Honored by the block layer directly, so it works on
+        the `none` and `mq-deadline` schedulers where `ioSchedulingClass`
+        is a no-op.
       '';
     };
 
@@ -251,7 +280,8 @@ in {
         directly (resource limits, restart policy, security
         hardening, etc.). Module-managed keys (`DynamicUser`,
         `StateDirectory`, `Nice`, `CPUSchedulingPolicy`,
-        `IOSchedulingClass`, `LoadCredential`) win on conflict.
+        `IOSchedulingClass`, `CPUWeight`, `IOWeight`,
+        `LoadCredential`) win on conflict.
       '';
     };
   };
@@ -323,6 +353,8 @@ in {
           Nice = cfg.nice;
           CPUSchedulingPolicy = cfg.cpuSchedulingPolicy;
           IOSchedulingClass = cfg.ioSchedulingClass;
+          CPUWeight = cfg.cpuWeight;
+          IOWeight = cfg.ioWeight;
           LoadCredential = lib.mapAttrsToList (k: v: "${k}:${v}") cfg.credentials;
         };
     };
