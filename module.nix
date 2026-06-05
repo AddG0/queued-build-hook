@@ -24,8 +24,8 @@ in {
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = inputs.self.packages.${pkgs.system}.default;
-      defaultText = lib.literalExpression "inputs.queued-build-hook.packages.\${pkgs.system}.default";
+      default = inputs.self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+      defaultText = lib.literalExpression "inputs.queued-build-hook.packages.\${pkgs.stdenv.hostPlatform.system}.default";
       description = "The queued-build-hook package to use.";
     };
 
