@@ -43,6 +43,11 @@ pub enum Request {
         out_paths: Vec<String>,
     },
     Status,
+    /// Park all uploads until a matching `Resume`. Cancels any in-flight
+    /// upload (the job is requeued, not failed). Idempotent.
+    Pause,
+    /// Lift a manual `Pause`. Idempotent. Does not override a metered pause.
+    Resume,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -74,6 +79,10 @@ pub struct StatusReport {
     /// and the live metered flag (whether the daemon is currently parked).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub network: Option<NetworkStatus>,
+    /// True while a manual `Pause` is in effect (a `Resume` clears it).
+    /// Independent of `network.metered`; either one parks uploads.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

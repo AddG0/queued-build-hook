@@ -52,6 +52,57 @@ in {
       '';
     };
 
+    controlSocketPath = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/queued-build-hook/control.sock";
+      description = ''
+        Optional second socket carrying only the control commands
+        (`pause` / `resume` / `status`). Split from the enqueue socket so its
+        ownership can be scoped separately (see `controlSocketUser` /
+        `controlSocketGroup` / `controlSocketMode`): a principal that should be
+        able to pause uploads — e.g. a "stop pushing while I'm gaming" service —
+        gets this socket without the ability to enqueue arbitrary store paths.
+        The daemon also refuses `Enqueue` on it regardless, as defense in depth.
+
+        Prefer scoping it to the single user that needs it (owner + `0600`)
+        rather than a broad group. `null` (default) disables the separate
+        socket; control commands then work over the main socket like before.
+        Type is `str` (runtime path), not `path`.
+      '';
+    };
+
+    controlSocketUser = lib.mkOption {
+      type = lib.types.str;
+      default = "root";
+      description = ''
+        Owner of the control socket. Only meaningful when `controlSocketPath`
+        is set. Set it to the one user that drives pause/resume and pair with
+        `controlSocketMode = "0600"` to keep the channel to exactly that user
+        (plus root), with no group access.
+      '';
+    };
+
+    controlSocketGroup = lib.mkOption {
+      type = lib.types.str;
+      default = cfg.socketGroup;
+      defaultText = lib.literalExpression "config.services.queued-build-hook.socketGroup";
+      description = ''
+        Group of the control socket. Only meaningful when `controlSocketPath`
+        is set and `controlSocketMode` grants group access. Irrelevant at
+        `0600` (owner-only).
+      '';
+    };
+
+    controlSocketMode = lib.mkOption {
+      type = lib.types.str;
+      default = "0660";
+      description = ''
+        Filesystem mode of the control socket. `0600` (with `controlSocketUser`)
+        restricts control to a single user; `0660` shares it with the group.
+      '';
+    };
+
     concurrency = lib.mkOption {
       type = lib.types.ints.positive;
       default = 1;
@@ -297,20 +348,41 @@ in {
     nix.settings.post-build-hook = "${enqueueWrapper}";
 
     systemd.sockets.queued-build-hook = {
-      description = "queued-build-hook socket";
+      description = "queued-build-hook enqueue socket";
       wantedBy = ["sockets.target"];
       socketConfig = {
         ListenStream = cfg.socketPath;
         SocketMode = "0660";
         SocketUser = "root";
         SocketGroup = cfg.socketGroup;
+        # Named so the daemon can tell it apart from the control socket in
+        # LISTEN_FDNAMES when both activate the one service.
+        FileDescriptorName = "enqueue";
+        Service = "queued-build-hook.service";
+      };
+    };
+
+    # Optional lower-privilege control socket (pause/resume/status only). A
+    # second .socket feeding the same .service — systemd passes both fds to the
+    # daemon, distinguished by FileDescriptorName.
+    systemd.sockets.queued-build-hook-control = lib.mkIf (cfg.controlSocketPath != null) {
+      description = "queued-build-hook control socket";
+      wantedBy = ["sockets.target"];
+      socketConfig = {
+        ListenStream = cfg.controlSocketPath;
+        SocketMode = cfg.controlSocketMode;
+        SocketUser = cfg.controlSocketUser;
+        SocketGroup = cfg.controlSocketGroup;
+        FileDescriptorName = "control";
         Service = "queued-build-hook.service";
       };
     };
 
     systemd.services.queued-build-hook = {
       description = "queued-build-hook async post-build-hook queue";
-      requires = ["queued-build-hook.socket"];
+      requires =
+        ["queued-build-hook.socket"]
+        ++ lib.optional (cfg.controlSocketPath != null) "queued-build-hook-control.socket";
       after = ["network.target"];
       # Make `nix` discoverable on PATH for the daemon's metrics path
       # (`nix path-info` is invoked per batch). The user-supplied
@@ -336,6 +408,7 @@ in {
           --retries ${toString cfg.retries} \
           --retry-interval-secs ${toString cfg.retryIntervalSecs} \
           ${lib.optionalString cfg.pauseOnMetered "--pause-on-metered"} \
+          ${lib.optionalString (cfg.controlSocketPath != null) "--control-socket ${cfg.controlSocketPath}"} \
           ${lib.escapeShellArgs cfg.extraDaemonArgs}
       '';
       environment =

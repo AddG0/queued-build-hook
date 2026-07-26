@@ -1,5 +1,6 @@
 mod client;
 mod daemon;
+mod gate;
 mod logging;
 mod network_state;
 mod protocol;
@@ -30,6 +31,13 @@ enum Command {
 
     /// Print the daemon's queue snapshot as pretty JSON.
     Status(SocketArgs),
+
+    /// Park all uploads until `resume`. Cancels any in-flight upload (requeued,
+    /// not failed). Point --socket at the control socket if one is configured.
+    Pause(SocketArgs),
+
+    /// Lift a manual `pause`. Does not override a metered pause.
+    Resume(SocketArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -42,6 +50,12 @@ struct DaemonArgs {
     /// Unix socket path. Ignored when started with systemd LISTEN_FDS.
     #[arg(long, default_value = "./pusher.sock")]
     socket: PathBuf,
+
+    /// Optional control-only socket path (pause/resume/status). Bound directly
+    /// only when not socket-activated; under systemd it arrives as the
+    /// `control`-named LISTEN_FD. Omit to disable the separate control socket.
+    #[arg(long)]
+    control_socket: Option<PathBuf>,
 
     /// Number of worker threads.
     #[arg(long, default_value_t = 1)]
@@ -74,8 +88,10 @@ impl From<DaemonArgs> for daemon::DaemonOpts {
         daemon::DaemonOpts {
             hook: a.hook,
             socket: a.socket,
+            control_socket: a.control_socket,
             concurrency: a.concurrency,
-            retries: a.retries.max(1),
+            // Clamped to >=1 in daemon::run, where they're consumed.
+            retries: a.retries,
             retry_interval: Duration::from_secs(a.retry_interval_secs),
             pause_on_metered: a.pause_on_metered,
         }
@@ -91,6 +107,8 @@ fn main() -> ExitCode {
         Command::Daemon(a) => daemon::run(a.into()),
         Command::Enqueue(a) => client::enqueue(&a.socket),
         Command::Status(a) => client::status(&a.socket),
+        Command::Pause(a) => client::pause(&a.socket),
+        Command::Resume(a) => client::resume(&a.socket),
     };
 
     match result {

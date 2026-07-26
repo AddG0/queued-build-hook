@@ -32,10 +32,7 @@ pub fn enqueue(socket: &Path) -> Result<(), String> {
         drv_path,
         out_paths,
     };
-    match call(socket, &req)? {
-        Response::Ack => Ok(()),
-        other => Err(format!("unexpected response: {other:?}")),
-    }
+    ack_call(socket, &req)
 }
 
 pub fn status(socket: &Path) -> Result<(), String> {
@@ -49,11 +46,33 @@ pub fn status(socket: &Path) -> Result<(), String> {
     }
 }
 
+pub fn pause(socket: &Path) -> Result<(), String> {
+    ack_call(socket, &Request::Pause)
+}
+
+pub fn resume(socket: &Path) -> Result<(), String> {
+    ack_call(socket, &Request::Resume)
+}
+
+fn ack_call(socket: &Path, req: &Request) -> Result<(), String> {
+    match call(socket, req)? {
+        Response::Ack => Ok(()),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
 /// Send one request, return the response — translating `Response::Error`
 /// from the daemon into our local `Err` so callers only handle one error
 /// channel.
 fn call(socket: &Path, req: &Request) -> Result<Response, String> {
     let mut stream = connect_with_retry(socket)?;
+    // A wedged daemon (accepting but not replying) would otherwise hang the
+    // caller forever — and the always-on game-pause watcher blocks on this.
+    let timeout = Some(Duration::from_secs(10));
+    stream
+        .set_read_timeout(timeout)
+        .and_then(|_| stream.set_write_timeout(timeout))
+        .map_err(|e| format!("set timeout: {e}"))?;
     protocol::write_line(&mut stream, req)?;
     let mut reader = BufReader::new(stream);
     match protocol::read_line(&mut reader)? {
